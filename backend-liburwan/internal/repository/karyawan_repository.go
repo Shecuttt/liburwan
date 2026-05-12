@@ -1,0 +1,42 @@
+package repository
+
+import (
+	"backend-liburwan/internal/model"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+type KaryawanRepository struct {
+	db *gorm.DB
+}
+
+func NewKaryawanRepository(db *gorm.DB) *KaryawanRepository {
+	return &KaryawanRepository{db: db}
+}
+
+func (r *KaryawanRepository) GetAll(tokoID string) ([]model.Karyawan, error) {
+	var karyawans []model.Karyawan
+	query := r.db.Preload("Toko")
+	if tokoID != "" {
+		query = query.Where("toko_id = ?", tokoID)
+	}
+	err := query.Find(&karyawans).Error
+	return karyawans, err
+}
+
+func (r *KaryawanRepository) GetByID(id uuid.UUID) (*model.Karyawan, error) {
+	var karyawan model.Karyawan
+	err := r.db.Preload("Toko").First(&karyawan, "id = ?", id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &karyawan, nil
+}
+
+func (r *KaryawanRepository) Create(karyawan *model.Karyawan) error {
+	return r.db.Create(karyawan).Error
+}
+
+func (r *KaryawanRepository) Update(id uuid.UUID, data map[string]interface{}) error {
+	return r.db.Model(&model.Karyawan{}).Where("id = ?", id).Updates(data).Error
+}

@@ -1,0 +1,7 @@
+DROP TABLE IF EXISTS backup_assignment;
+DROP TABLE IF EXISTS jadwal_libur;
+DROP TABLE IF EXISTS karyawan;
+DROP TABLE IF EXISTS toko;
+
+DROP TYPE IF EXISTS leave_type;
+DROP TYPE IF EXISTS role_type;

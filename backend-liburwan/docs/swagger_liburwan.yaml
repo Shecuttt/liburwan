@@ -1,0 +1,1008 @@
+openapi: 3.0.3
+info:
+  title: Liburwan API
+  description: |
+    API untuk sistem manajemen jadwal libur karyawan UMKM multi-cabang.
+
+    **Prinsip utama:**
+    - Self-service dengan hard constraint — request langsung granted jika lolos validasi
+    - Admin tidak bisa approve/reject request yang valid
+    - Admin hanya intervensi untuk unplanned leave dan konfirmasi backup
+  version: 1.0.0
+
+servers:
+  - url: /api/v1
+
+tags:
+  - name: Auth
+    description: Autentikasi
+  - name: Toko
+    description: Manajemen data toko
+  - name: Karyawan
+    description: Manajemen data karyawan
+  - name: Kalender
+    description: Shared calendar view
+  - name: Jadwal Libur
+    description: CRUD jadwal libur — planned dan unplanned
+  - name: Backup Assignment
+    description: Manajemen backup karyawan
+  - name: Metrik
+    description: Rekap dan metrik kinerja — hanya admin
+
+# ─────────────────────────────────────────
+# COMPONENTS
+# ─────────────────────────────────────────
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # ── Toko ──
+    Toko:
+  type: object
+  properties:
+    id:
+      type: string
+      format: uuid
+    nama:
+      type: string
+      example: Toko Cabang Selatan
+    is_pusat:
+      type: boolean
+      description: true jika ini adalah toko pusat
+    created_at:
+      type: string
+      format: date-time
+
+    # ── Karyawan ──
+    Karyawan:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        nama:
+          type: string
+          example: Budi Santoso
+        role:
+          type: string
+          enum: [admin, karyawan]
+        toko_id:
+          type: string
+          format: uuid
+        toko_nama:
+          type: string
+          example: Toko Cabang Selatan
+        created_at:
+          type: string
+          format: date-time
+
+    # ── Jadwal Libur ──
+    JadwalLibur:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        karyawan_id:
+          type: string
+          format: uuid
+        karyawan_nama:
+          type: string
+          example: Budi Santoso
+        toko_id:
+          type: string
+          format: uuid
+        toko_nama:
+          type: string
+          example: Toko Cabang Selatan
+        tanggal:
+          type: string
+          format: date
+          example: "2026-06-15"
+        tipe:
+          type: string
+          enum: [planned, unplanned]
+        backup_assignment:
+          $ref: "#/components/schemas/BackupAssignment"
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # ── Backup Assignment ──
+    BackupAssignment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        jadwal_libur_id:
+          type: string
+          format: uuid
+        backup_karyawan_id:
+          type: string
+          format: uuid
+        backup_karyawan_nama:
+          type: string
+          example: Sari Dewi
+        assigned_by:
+          type: string
+          format: uuid
+        assigned_by_nama:
+          type: string
+          example: Admin Pusat
+        created_at:
+          type: string
+          format: date-time
+
+    # ── Calendar Day ──
+    CalendarDay:
+      type: object
+      properties:
+        tanggal:
+          type: string
+          format: date
+          example: "2026-06-15"
+        toko:
+          type: array
+          items:
+            type: object
+            properties:
+              toko_id:
+                type: string
+                format: uuid
+              toko_nama:
+                type: string
+                example: Toko Cabang Selatan
+              available_count:
+                type: integer
+                description: Jumlah karyawan yang tidak libur di hari ini
+                example: 3
+              is_rawan:
+                type: boolean
+                description: true jika available_count == 2
+              libur:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    karyawan_id:
+                      type: string
+                      format: uuid
+                    karyawan_nama:
+                      type: string
+                    tipe:
+                      type: string
+                      enum: [planned, unplanned]
+                    backup_karyawan_nama:
+                      type: string
+                      nullable: true
+
+    # ── Availability Check Result ──
+    AvailabilityCheckResult:
+      type: object
+      properties:
+        available_count_after:
+          type: integer
+          description: Jumlah karyawan available setelah request ini dihitung
+          example: 2
+        needs_backup:
+          type: boolean
+          description: true jika available_count_after == 1, backup wajib sebelum granted
+        suggested_backup:
+          type: array
+          description: Karyawan dari toko lain yang tidak libur di tanggal ini
+          items:
+            type: object
+            properties:
+              karyawan_id:
+                type: string
+                format: uuid
+              karyawan_nama:
+                type: string
+              toko_id:
+                type: string
+                format: uuid
+              toko_nama:
+                type: string
+
+    # ── Error ──
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+          example: KUOTA_HABIS
+        message:
+          type: string
+          example: Kuota libur bulan ini sudah habis (3/3)
+
+  responses:
+    Unauthorized:
+      description: Token tidak valid atau tidak ada
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: UNAUTHORIZED
+            message: Token tidak valid
+    Forbidden:
+      description: Tidak punya akses ke resource ini
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: FORBIDDEN
+            message: Akses ditolak
+
+security:
+  - BearerAuth: []
+
+# ─────────────────────────────────────────
+# PATHS
+# ─────────────────────────────────────────
+paths:
+  # ══════════════════
+  # AUTH
+  # ══════════════════
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Login berhasil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  karyawan:
+                    $ref: "#/components/schemas/Karyawan"
+        "401":
+          description: Email atau password salah
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                code: INVALID_CREDENTIALS
+                message: Email atau password salah
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get profil user yang sedang login
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Karyawan"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ══════════════════
+  # TOKO
+  # ══════════════════
+  /toko:
+    get:
+      tags: [Toko]
+      summary: List semua toko
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Toko"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /toko/{toko_id}:
+    get:
+      tags: [Toko]
+      summary: Detail satu toko
+      parameters:
+        - name: toko_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Toko"
+        "404":
+          description: Toko tidak ditemukan
+
+  # ══════════════════
+  # KARYAWAN
+  # ══════════════════
+  /karyawan:
+    get:
+      tags: [Karyawan]
+      summary: List karyawan
+      description: |
+        Karyawan hanya bisa melihat karyawan di toko yang sama.
+        Admin bisa melihat semua karyawan lintas toko.
+      parameters:
+        - name: toko_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filter by toko (hanya berlaku untuk admin)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Karyawan"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      tags: [Karyawan]
+      summary: Tambah karyawan baru
+      description: Hanya admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nama, role, toko_id]
+              properties:
+                nama:
+                  type: string
+                role:
+                  type: string
+                  enum: [admin, karyawan]
+                toko_id:
+                  type: string
+                  format: uuid
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        "201":
+          description: Karyawan berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Karyawan"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /karyawan/{karyawan_id}:
+    get:
+      tags: [Karyawan]
+      summary: Detail satu karyawan
+      parameters:
+        - name: karyawan_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Karyawan"
+        "404":
+          description: Karyawan tidak ditemukan
+
+    patch:
+      tags: [Karyawan]
+      summary: Update data karyawan
+      description: Hanya admin
+      parameters:
+        - name: karyawan_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nama:
+                  type: string
+                toko_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Karyawan"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ══════════════════
+  # KALENDER
+  # ══════════════════
+  /kalender:
+    get:
+      tags: [Kalender]
+      summary: Get shared calendar view
+      description: |
+        Mengembalikan data kalender untuk rentang bulan yang diminta.
+        Semua user melihat data yang sama — lintas toko, transparan penuh.
+
+        **Window yang diizinkan:** bulan berjalan dan bulan depan saja.
+      parameters:
+        - name: bulan
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+            example: "2026-06"
+          description: Format YYYY-MM
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bulan:
+                    type: string
+                    example: "2026-06"
+                  hari:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CalendarDay"
+        "400":
+          description: Bulan di luar window yang diizinkan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                code: OUT_OF_WINDOW
+                message: Hanya bisa melihat bulan berjalan dan bulan depan
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ══════════════════
+  # JADWAL LIBUR
+  # ══════════════════
+  /jadwal-libur:
+    get:
+      tags: [Jadwal Libur]
+      summary: List jadwal libur
+      description: |
+        Karyawan hanya melihat jadwal libur miliknya sendiri.
+        Admin bisa filter by karyawan atau toko.
+      parameters:
+        - name: karyawan_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: toko_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: bulan
+          in: query
+          schema:
+            type: string
+            pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+            example: "2026-06"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/JadwalLibur"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      tags: [Jadwal Libur]
+      summary: Ajukan jadwal libur (planned)
+      description: |
+        Digunakan oleh karyawan untuk mengajukan libur sendiri.
+
+        **Flow validasi:**
+        1. Cek window booking (bulan berjalan / bulan depan)
+        2. Cek kuota (maks 3x/bulan)
+        3. Hitung available karyawan toko setelah request ini
+        4. Jika available >= 2 → langsung granted
+        5. Jika available == 1 → wajib sertakan `backup_karyawan_id`
+        6. Jika available == 0 → tolak, tidak bisa diproses
+
+        **Catatan:** backup_karyawan_id tidak boleh sama dengan karyawan yang request,
+        dan backup tidak boleh juga libur di tanggal yang sama.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tanggal]
+              properties:
+                tanggal:
+                  type: string
+                  format: date
+                  example: "2026-06-15"
+                backup_karyawan_id:
+                  type: string
+                  format: uuid
+                  description: Wajib jika available setelah request == 1
+      responses:
+        "201":
+          description: Jadwal libur berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JadwalLibur"
+        "400":
+          description: Validasi gagal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                kuota_habis:
+                  summary: Kuota bulan ini habis
+                  value:
+                    code: KUOTA_HABIS
+                    message: Kuota libur bulan ini sudah habis (3/3)
+                needs_backup:
+                  summary: Butuh backup tapi tidak disertakan
+                  value:
+                    code: BACKUP_REQUIRED
+                    message: Toko akan tersisa 1 orang, wajib sertakan backup_karyawan_id
+                no_backup_available:
+                  summary: Tidak ada backup tersedia
+                  value:
+                    code: NO_BACKUP_AVAILABLE
+                    message: Tidak ada karyawan lain yang bisa jadi backup di tanggal ini
+                out_of_window:
+                  summary: Tanggal di luar window booking
+                  value:
+                    code: OUT_OF_WINDOW
+                    message: Hanya bisa booking bulan berjalan dan bulan depan
+                backup_invalid:
+                  summary: Backup juga libur di tanggal yang sama
+                  value:
+                    code: BACKUP_INVALID
+                    message: Karyawan yang dipilih sebagai backup juga libur di tanggal ini
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /jadwal-libur/check:
+    get:
+      tags: [Jadwal Libur]
+      summary: Cek availability sebelum submit request
+      description: |
+        Endpoint helper untuk frontend — cek kondisi availability di tanggal tertentu
+        sebelum user submit. Mengembalikan info apakah backup diperlukan dan siapa saja
+        yang bisa jadi backup.
+
+        Tidak membuat record apapun.
+      parameters:
+        - name: tanggal
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+            example: "2026-06-15"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AvailabilityCheckResult"
+        "400":
+          description: Tanggal di luar window atau kuota habis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /jadwal-libur/{id}:
+    get:
+      tags: [Jadwal Libur]
+      summary: Detail satu jadwal libur
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JadwalLibur"
+        "404":
+          description: Jadwal libur tidak ditemukan
+
+    patch:
+      tags: [Jadwal Libur]
+      summary: Ubah tanggal jadwal libur
+      description: |
+        Hanya bisa dilakukan oleh karyawan pemilik jadwal atau admin.
+
+        **Constraint:**
+        - Hanya diizinkan jika tanggal lama > current_date
+        - Tanggal baru harus lolos semua validasi yang sama dengan POST
+        - Jika ada backup assignment di tanggal lama, akan di-cascade delete otomatis
+
+        Frontend wajib menampilkan warning ke user jika ada backup assignment
+        sebelum submit perubahan.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tanggal]
+              properties:
+                tanggal:
+                  type: string
+                  format: date
+                  example: "2026-06-20"
+                backup_karyawan_id:
+                  type: string
+                  format: uuid
+                  description: Wajib jika available di tanggal baru == 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JadwalLibur"
+        "400":
+          description: Validasi gagal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                tanggal_lewat:
+                  summary: Tanggal sudah terlewat
+                  value:
+                    code: TANGGAL_TERLEWAT
+                    message: Tidak bisa mengubah jadwal libur yang tanggalnya sudah lewat
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+    delete:
+      tags: [Jadwal Libur]
+      summary: Batalkan jadwal libur
+      description: |
+        Hanya bisa dilakukan oleh karyawan pemilik atau admin.
+        Hanya bisa dibatalkan jika tanggal > current_date.
+        Backup assignment terkait akan ikut terhapus (cascade).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Berhasil dibatalkan
+        "400":
+          description: Tanggal sudah terlewat, tidak bisa dibatalkan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                code: TANGGAL_TERLEWAT
+                message: Tidak bisa membatalkan jadwal libur yang tanggalnya sudah lewat
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ══════════════════
+  # UNPLANNED LEAVE (Admin only)
+  # ══════════════════
+  /jadwal-libur/unplanned:
+    post:
+      tags: [Jadwal Libur]
+      summary: Input unplanned leave — hanya admin
+      description: |
+        Digunakan admin untuk mencatat karyawan yang tidak masuk dadakan (sakit, dll).
+
+        Sistem akan mengecek apakah toko terdampak jadi di bawah 2 available.
+        Jika iya, response akan menyertakan `suggested_backup` untuk referensi admin
+        sebelum melakukan koordinasi di luar sistem.
+
+        Backup assignment dikonfirmasi terpisah via `POST /backup-assignment`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [karyawan_id, tanggal]
+              properties:
+                karyawan_id:
+                  type: string
+                  format: uuid
+                tanggal:
+                  type: string
+                  format: date
+                  example: "2026-06-15"
+      responses:
+        "201":
+          description: Unplanned leave berhasil dicatat
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jadwal_libur:
+                    $ref: "#/components/schemas/JadwalLibur"
+                  availability_after:
+                    type: integer
+                    description: Jumlah karyawan available setelah unplanned leave ini
+                  suggested_backup:
+                    type: array
+                    description: Karyawan lain yang available jika toko kekurangan. Kosong jika availability masih >= 2.
+                    items:
+                      type: object
+                      properties:
+                        karyawan_id:
+                          type: string
+                          format: uuid
+                        karyawan_nama:
+                          type: string
+                        toko_id:
+                          type: string
+                          format: uuid
+                        toko_nama:
+                          type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ══════════════════
+  # BACKUP ASSIGNMENT
+  # ══════════════════
+  /backup-assignment:
+    post:
+      tags: [Backup Assignment]
+      summary: Konfirmasi backup assignment — hanya admin
+      description: |
+        Admin mengkonfirmasi backup assignment setelah kesepakatan dilakukan di luar sistem.
+        Satu jadwal libur hanya bisa punya satu backup assignment aktif.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [jadwal_libur_id, backup_karyawan_id]
+              properties:
+                jadwal_libur_id:
+                  type: string
+                  format: uuid
+                backup_karyawan_id:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: Backup assignment berhasil dikonfirmasi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupAssignment"
+        "400":
+          description: Validasi gagal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                backup_invalid:
+                  summary: Backup juga libur di tanggal yang sama
+                  value:
+                    code: BACKUP_INVALID
+                    message: Karyawan yang dipilih sebagai backup juga libur di tanggal ini
+                already_assigned:
+                  summary: Sudah ada backup assignment
+                  value:
+                    code: ALREADY_ASSIGNED
+                    message: Jadwal libur ini sudah memiliki backup assignment
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /backup-assignment/{id}:
+    delete:
+      tags: [Backup Assignment]
+      summary: Hapus backup assignment — hanya admin
+      description: Digunakan jika kesepakatan backup batal atau perlu diganti.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Berhasil dihapus
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Backup assignment tidak ditemukan
+
+  # ══════════════════
+  # METRIK (Admin only)
+  # ══════════════════
+  /metrik/karyawan/{karyawan_id}:
+    get:
+      tags: [Metrik]
+      summary: Metrik per karyawan — hanya admin
+      parameters:
+        - name: karyawan_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: bulan
+          in: query
+          schema:
+            type: string
+            pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+            example: "2026-06"
+          description: Filter by bulan. Jika tidak diisi, mengembalikan semua histori.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  karyawan:
+                    $ref: "#/components/schemas/Karyawan"
+                  ringkasan:
+                    type: object
+                    properties:
+                      total_planned:
+                        type: integer
+                        description: Total hari libur planned
+                      total_unplanned:
+                        type: integer
+                        description: Total hari tidak masuk dadakan
+                      total_jadi_backup:
+                        type: integer
+                        description: Total kali menjadi backup untuk karyawan lain
+                  histori:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/JadwalLibur"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /metrik/toko/{toko_id}:
+    get:
+      tags: [Metrik]
+      summary: Metrik per toko — hanya admin
+      parameters:
+        - name: toko_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: bulan
+          in: query
+          schema:
+            type: string
+            pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+            example: "2026-06"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  toko:
+                    $ref: "#/components/schemas/Toko"
+                  ringkasan:
+                    type: object
+                    properties:
+                      total_hari_kritis:
+                        type: integer
+                        description: Jumlah hari dalam bulan ini yang availability == 2
+                      total_backup_dari_luar:
+                        type: integer
+                        description: Jumlah kali toko ini menerima backup dari cabang lain
+                      total_unplanned:
+                        type: integer
+                        description: Total unplanned leave di toko ini
+                  hari_kritis:
+                    type: array
+                    description: List tanggal yang availability == 2
+                    items:
+                      type: object
+                      properties:
+                        tanggal:
+                          type: string
+                          format: date
+                        available_count:
+                          type: integer
+        "403":
+          $ref: "#/components/responses/Forbidden"

@@ -1,0 +1,36 @@
+# --- Backend (Go) ---
+backend-liburwan/*.exe
+backend-liburwan/*.exe~
+backend-liburwan/*.dll
+backend-liburwan/*.so
+backend-liburwan/*.dylib
+backend-liburwan/*.test
+backend-liburwan/*.out
+backend-liburwan/.env
+backend-liburwan/*.env
+
+# --- Frontend (Node/React/Next.js) ---
+frontend-liburwan/node_modules/
+frontend-liburwan/.next/
+frontend-liburwan/build/
+frontend-liburwan/dist/
+frontend-liburwan/.env
+frontend-liburwan/*.env
+frontend-liburwan/.env*.local
+frontend-liburwan/.vercel
+frontend-liburwan/*.log
+frontend-liburwan/npm-debug.log*
+frontend-liburwan/yarn-debug.log*
+frontend-liburwan/yarn-error.log*
+
+# --- Common/IDE ---
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+Thumbs.db
+Desktop.ini
