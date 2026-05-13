@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 var (
@@ -20,12 +21,14 @@ var (
 )
 
 type JadwalLiburService struct {
-	repo         *repository.JadwalLiburRepository
-	karyawanRepo *repository.KaryawanRepository
+	repo          *repository.JadwalLiburRepository
+	karyawanRepo  *repository.KaryawanRepository
+	configService *KonfigurasiService
+	auditService  *AuditLogService
 }
 
-func NewJadwalLiburService(repo *repository.JadwalLiburRepository, karyawanRepo *repository.KaryawanRepository) *JadwalLiburService {
-	return &JadwalLiburService{repo: repo, karyawanRepo: karyawanRepo}
+func NewJadwalLiburService(repo *repository.JadwalLiburRepository, karyawanRepo *repository.KaryawanRepository, configService *KonfigurasiService, auditService *AuditLogService) *JadwalLiburService {
+	return &JadwalLiburService{repo: repo, karyawanRepo: karyawanRepo, configService: configService, auditService: auditService}
 }
 
 func (s *JadwalLiburService) GetAll(karyawanID, tokoID, bulan string) ([]model.JadwalLibur, error) {
@@ -37,12 +40,16 @@ func (s *JadwalLiburService) GetByID(id uuid.UUID) (*model.JadwalLibur, error) {
 }
 
 func (s *JadwalLiburService) CheckAvailability(karyawanID uuid.UUID, tanggal time.Time) (int, bool, []model.Karyawan, error) {
+	configs, _ := s.configService.GetConfigMap()
+	maxLibur := s.configService.GetInt(configs, "maks_libur_per_bulan", 3)
+	minAvailable := s.configService.GetInt(configs, "min_available_per_hari", 2)
+
 	karyawan, err := s.karyawanRepo.GetByID(karyawanID)
 	if err != nil {
 		return 0, false, nil, err
 	}
 
-	// 1. Check window (Hanya untuk planned, tapi check helper biasanya dipanggil untuk planned)
+	// 1. Check window
 	if !s.isWithinWindow(tanggal) {
 		return 0, false, nil, ErrOutOfWindow
 	}
@@ -52,7 +59,7 @@ func (s *JadwalLiburService) CheckAvailability(karyawanID uuid.UUID, tanggal tim
 	if err != nil {
 		return 0, false, nil, err
 	}
-	if count >= 3 {
+	if int(count) >= maxLibur {
 		return 0, false, nil, ErrKuotaHabis
 	}
 
@@ -62,9 +69,9 @@ func (s *JadwalLiburService) CheckAvailability(karyawanID uuid.UUID, tanggal tim
 		return 0, false, nil, err
 	}
 
-	needsBackup := availableAfter == 1
+	needsBackup := availableAfter < minAvailable && availableAfter > 0
 	var suggestedBackup []model.Karyawan
-	if availableAfter < 2 {
+	if availableAfter < minAvailable {
 		suggestedBackup, _ = s.repo.GetAvailableBackups(tanggal, karyawanID)
 	}
 
@@ -72,26 +79,27 @@ func (s *JadwalLiburService) CheckAvailability(karyawanID uuid.UUID, tanggal tim
 }
 
 func (s *JadwalLiburService) CreatePlanned(karyawanID uuid.UUID, tanggal time.Time, backupKaryawanID *uuid.UUID) (*model.JadwalLibur, error) {
+	configs, _ := s.configService.GetConfigMap()
+	maxLibur := s.configService.GetInt(configs, "maks_libur_per_bulan", 3)
+	minAvailable := s.configService.GetInt(configs, "min_available_per_hari", 2)
+
 	karyawan, err := s.karyawanRepo.GetByID(karyawanID)
 	if err != nil {
 		return nil, err
 	}
 
-	// 1. Check window
 	if !s.isWithinWindow(tanggal) {
 		return nil, ErrOutOfWindow
 	}
 
-	// 2. Check quota
 	count, err := s.repo.CountEmployeeLeavesInMonth(karyawanID, tanggal.Year(), tanggal.Month())
 	if err != nil {
 		return nil, err
 	}
-	if count >= 3 {
+	if int(count) >= maxLibur {
 		return nil, ErrKuotaHabis
 	}
 
-	// 3. Calculate availability
 	availableAfter, err := s.calculateAvailabilityAfter(karyawan.TokoID, tanggal, karyawanID)
 	if err != nil {
 		return nil, err
@@ -107,24 +115,42 @@ func (s *JadwalLiburService) CreatePlanned(karyawanID uuid.UUID, tanggal time.Ti
 		Tipe:       "planned",
 	}
 
-	if availableAfter == 1 {
+	var backup *model.BackupAssignment
+	if availableAfter < minAvailable {
 		if backupKaryawanID == nil {
 			return nil, ErrBackupRequired
 		}
-		// Check if backup is valid (not on leave)
-		backupOnLeave, _ := s.isKaryawanOnLeave( *backupKaryawanID, tanggal)
+		backupOnLeave, _ := s.isKaryawanOnLeave(*backupKaryawanID, tanggal)
 		if backupOnLeave {
 			return nil, ErrBackupInvalid
 		}
 
-		backup := &model.BackupAssignment{
+		backup = &model.BackupAssignment{
 			BackupKaryawanID: *backupKaryawanID,
-			AssignedBy:       karyawanID, // Self-assigned in planned leave context
+			AssignedBy:       karyawanID,
 		}
-		err = s.repo.CreateWithBackup(jadwal, backup)
-	} else {
-		err = s.repo.Create(jadwal)
 	}
+
+	err = s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(jadwal).Error; err != nil {
+			return err
+		}
+		if backup != nil {
+			backup.JadwalLiburID = jadwal.ID
+			if err := tx.Create(backup).Error; err != nil {
+				return err
+			}
+		}
+
+		payload := map[string]interface{}{
+			"jadwal": jadwal,
+		}
+		if backup != nil {
+			payload["backup"] = backup
+		}
+
+		return s.auditService.Log(tx, &karyawanID, "CREATE_JADWAL_LIBUR", "jadwal_libur", jadwal.ID, payload)
+	})
 
 	if err != nil {
 		return nil, err
@@ -132,7 +158,10 @@ func (s *JadwalLiburService) CreatePlanned(karyawanID uuid.UUID, tanggal time.Ti
 	return s.repo.GetByID(jadwal.ID)
 }
 
-func (s *JadwalLiburService) CreateUnplanned(karyawanID uuid.UUID, tanggal time.Time) (*model.JadwalLibur, int, []model.Karyawan, error) {
+func (s *JadwalLiburService) CreateUnplanned(karyawanID uuid.UUID, tanggal time.Time, adminID uuid.UUID) (*model.JadwalLibur, int, []model.Karyawan, error) {
+	configs, _ := s.configService.GetConfigMap()
+	minAvailable := s.configService.GetInt(configs, "min_available_per_hari", 2)
+
 	karyawan, err := s.karyawanRepo.GetByID(karyawanID)
 	if err != nil {
 		return nil, 0, nil, err
@@ -144,15 +173,25 @@ func (s *JadwalLiburService) CreateUnplanned(karyawanID uuid.UUID, tanggal time.
 		Tipe:       "unplanned",
 	}
 
-	if err := s.repo.Create(jadwal); err != nil {
+	err = s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(jadwal).Error; err != nil {
+			return err
+		}
+		
+		payload := map[string]interface{}{
+			"jadwal": jadwal,
+		}
+		return s.auditService.Log(tx, &adminID, "CREATE_UNPLANNED_LEAVE", "jadwal_libur", jadwal.ID, payload)
+	})
+
+	if err != nil {
 		return nil, 0, nil, err
 	}
 
-	// Calculate availability after
-	availableAfter, _ := s.calculateAvailabilityAfter(karyawan.TokoID, tanggal, uuid.Nil) // Already created, so just count
-	
+	availableAfter, _ := s.calculateAvailabilityAfter(karyawan.TokoID, tanggal, uuid.Nil)
+
 	var suggestedBackup []model.Karyawan
-	if availableAfter < 2 {
+	if availableAfter < minAvailable {
 		suggestedBackup, _ = s.repo.GetAvailableBackups(tanggal, karyawanID)
 	}
 
@@ -160,27 +199,27 @@ func (s *JadwalLiburService) CreateUnplanned(karyawanID uuid.UUID, tanggal time.
 	return created, availableAfter, suggestedBackup, nil
 }
 
-func (s *JadwalLiburService) Update(id uuid.UUID, tanggal time.Time, backupKaryawanID *uuid.UUID, requesterRole string) (*model.JadwalLibur, error) {
+func (s *JadwalLiburService) Update(id uuid.UUID, tanggal time.Time, backupKaryawanID *uuid.UUID, requesterID uuid.UUID) (*model.JadwalLibur, error) {
+	configs, _ := s.configService.GetConfigMap()
+	maxLibur := s.configService.GetInt(configs, "maks_libur_per_bulan", 3)
+	minAvailable := s.configService.GetInt(configs, "min_available_per_hari", 2)
+
 	oldJadwal, err := s.repo.GetByID(id)
 	if err != nil {
 		return nil, ErrNotFound
 	}
 
-	// Constraint: old date must not have passed
 	if oldJadwal.Tanggal.Before(time.Now().Truncate(24 * time.Hour)) || oldJadwal.Tanggal.Equal(time.Now().Truncate(24 * time.Hour)) {
 		return nil, ErrTanggalTerlewat
 	}
 
-	// Run all validations for new date (if it's planned)
 	if oldJadwal.Tipe == "planned" {
 		if !s.isWithinWindow(tanggal) {
 			return nil, ErrOutOfWindow
 		}
-		// Quota: count excluding THIS record if it's in the same month
-		// Actually, simpler: if month changes, check quota. If same month, count will include this one, so it should be <= 3.
 		count, _ := s.repo.CountEmployeeLeavesInMonth(oldJadwal.KaryawanID, tanggal.Year(), tanggal.Month())
 		if oldJadwal.Tanggal.Month() != tanggal.Month() || oldJadwal.Tanggal.Year() != tanggal.Year() {
-			if count >= 3 {
+			if int(count) >= maxLibur {
 				return nil, ErrKuotaHabis
 			}
 		}
@@ -196,7 +235,7 @@ func (s *JadwalLiburService) Update(id uuid.UUID, tanggal time.Time, backupKarya
 	}
 
 	var backup *model.BackupAssignment
-	if availableAfter == 1 && oldJadwal.Tipe == "planned" {
+	if availableAfter < minAvailable && oldJadwal.Tipe == "planned" {
 		if backupKaryawanID == nil {
 			return nil, ErrBackupRequired
 		}
@@ -210,14 +249,40 @@ func (s *JadwalLiburService) Update(id uuid.UUID, tanggal time.Time, backupKarya
 		}
 	}
 
-	if err := s.repo.UpdateWithBackup(id, data, backup); err != nil {
+	err = s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("jadwal_libur_id = ?", id).Delete(&model.BackupAssignment{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.JadwalLibur{}).Where("id = ?", id).Updates(data).Error; err != nil {
+			return err
+		}
+		if backup != nil {
+			backup.JadwalLiburID = id
+			if err := tx.Create(backup).Error; err != nil {
+				return err
+			}
+		}
+
+		payload := map[string]interface{}{
+			"before": map[string]interface{}{
+				"tanggal": oldJadwal.Tanggal,
+			},
+			"after": map[string]interface{}{
+				"tanggal": tanggal,
+			},
+		}
+
+		return s.auditService.Log(tx, &requesterID, "UPDATE_JADWAL_LIBUR", "jadwal_libur", id, payload)
+	})
+
+	if err != nil {
 		return nil, err
 	}
 
 	return s.repo.GetByID(id)
 }
 
-func (s *JadwalLiburService) Delete(id uuid.UUID) error {
+func (s *JadwalLiburService) Delete(id uuid.UUID, requesterID uuid.UUID) error {
 	jadwal, err := s.repo.GetByID(id)
 	if err != nil {
 		return ErrNotFound
@@ -227,7 +292,17 @@ func (s *JadwalLiburService) Delete(id uuid.UUID) error {
 		return ErrTanggalTerlewat
 	}
 
-	return s.repo.Delete(id)
+	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		payload := map[string]interface{}{
+			"jadwal": jadwal,
+		}
+		
+		if err := s.auditService.Log(tx, &requesterID, "DELETE_JADWAL_LIBUR", "jadwal_libur", id, payload); err != nil {
+			return err
+		}
+
+		return tx.Delete(&model.JadwalLibur{}, "id = ?", id).Error
+	})
 }
 
 // Helpers

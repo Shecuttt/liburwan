@@ -16,6 +16,10 @@ func NewJadwalLiburRepository(db *gorm.DB) *JadwalLiburRepository {
 	return &JadwalLiburRepository{db: db}
 }
 
+func (r *JadwalLiburRepository) DB() *gorm.DB {
+	return r.db
+}
+
 func (r *JadwalLiburRepository) GetAll(karyawanID, tokoID, bulan string) ([]model.JadwalLibur, error) {
 	var jadwals []model.JadwalLibur
 	query := r.db.Preload("Karyawan.Toko").Preload("BackupAssignment.BackupKaryawan").Preload("BackupAssignment.Assigner")

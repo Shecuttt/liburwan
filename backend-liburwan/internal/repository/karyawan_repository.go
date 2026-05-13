@@ -28,6 +28,25 @@ func (r *KaryawanRepository) GetAll(tokoID string) ([]model.Karyawan, error) {
 	return karyawans, err
 }
 
+func (r *KaryawanRepository) CountInStore(tokoID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.db.Model(&model.Karyawan{}).Where("toko_id = ?", tokoID).Count(&count).Error
+	return count, err
+}
+
+func (r *KaryawanRepository) GetByEmail(email string) (*model.Karyawan, error) {
+	var karyawan model.Karyawan
+	err := r.db.Preload("Toko").Where("email = ?", email).First(&karyawan).Error
+	if err != nil {
+		return nil, err
+	}
+	return &karyawan, nil
+}
+
+func (r *KaryawanRepository) UpdateGoogleID(id uuid.UUID, googleID string) error {
+	return r.db.Model(&model.Karyawan{}).Where("id = ?", id).Update("google_id", googleID).Error
+}
+
 func (r *KaryawanRepository) GetByID(id uuid.UUID) (*model.Karyawan, error) {
 	var karyawan model.Karyawan
 	err := r.db.Preload("Toko").First(&karyawan, "id = ?", id).Error

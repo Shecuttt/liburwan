@@ -28,6 +28,8 @@ tags:
     description: Manajemen backup karyawan
   - name: Metrik
     description: Rekap dan metrik kinerja — hanya admin
+  - name: Konfigurasi
+    description: Konfigurasi sistem — hanya admin
 
 # ─────────────────────────────────────────
 # COMPONENTS
@@ -903,6 +905,83 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           description: Backup assignment tidak ditemukan
+
+  # ══════════════════
+  # KONFIGURASI
+  # ══════════════════
+  /konfigurasi:
+    get:
+      tags: [Konfigurasi]
+      summary: List semua konfigurasi — hanya admin
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    key:
+                      type: string
+                      example: maks_libur_per_bulan
+                    value:
+                      type: string
+                      example: "3"
+                    updated_at:
+                      type: string
+                      format: date-time
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /konfigurasi/{key}:
+    patch:
+      tags: [Konfigurasi]
+      summary: Update nilai konfigurasi — hanya admin
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+            example: maks_libur_per_bulan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: string
+                  example: "4"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  key:
+                    type: string
+                  value:
+                    type: string
+                  updated_at:
+                    type: string
+                    format: date-time
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: Key tidak ditemukan
 
   # ══════════════════
   # METRIK (Admin only)

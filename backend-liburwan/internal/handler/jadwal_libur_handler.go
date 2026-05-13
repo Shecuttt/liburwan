@@ -39,10 +39,10 @@ func (h *JadwalLiburHandler) CheckAvailability(c *gin.Context) {
 		return
 	}
 
-	karyawanIDStr := c.GetHeader("X-Karyawan-ID")
-	karyawanID, err := uuid.Parse(karyawanIDStr)
+	karyawanIDStr, _ := c.Get("karyawan_id")
+	karyawanID, err := uuid.Parse(karyawanIDStr.(string))
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": "UNAUTHORIZED", "message": "Header X-Karyawan-ID diperlukan"})
+		c.JSON(http.StatusUnauthorized, gin.H{"code": "UNAUTHORIZED", "message": "Invalid context karyawan_id"})
 		return
 	}
 
@@ -71,8 +71,8 @@ func (h *JadwalLiburHandler) CreatePlanned(c *gin.Context) {
 	}
 
 	tanggal, _ := time.Parse("2006-01-02", req.Tanggal)
-	karyawanIDStr := c.GetHeader("X-Karyawan-ID")
-	karyawanID, _ := uuid.Parse(karyawanIDStr)
+	karyawanIDStr, _ := c.Get("karyawan_id")
+	karyawanID, _ := uuid.Parse(karyawanIDStr.(string))
 
 	var backupID *uuid.UUID
 	if req.BackupKaryawanID != nil && *req.BackupKaryawanID != "" {
@@ -103,7 +103,10 @@ func (h *JadwalLiburHandler) CreateUnplanned(c *gin.Context) {
 	karyawanID, _ := uuid.Parse(req.KaryawanID)
 	tanggal, _ := time.Parse("2006-01-02", req.Tanggal)
 
-	jadwal, availableAfter, suggested, err := h.service.CreateUnplanned(karyawanID, tanggal)
+	adminIDStr, _ := c.Get("karyawan_id")
+	adminID, _ := uuid.Parse(adminIDStr.(string))
+
+	jadwal, availableAfter, suggested, err := h.service.CreateUnplanned(karyawanID, tanggal, adminID)
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -141,12 +144,14 @@ func (h *JadwalLiburHandler) Update(c *gin.Context) {
 	tanggal, _ := time.Parse("2006-01-02", req.Tanggal)
 	var backupID *uuid.UUID
 	if req.BackupKaryawanID != nil && *req.BackupKaryawanID != "" {
-		id, _ := uuid.Parse(*req.BackupKaryawanID)
-		backupID = &id
+		bid, _ := uuid.Parse(*req.BackupKaryawanID)
+		backupID = &bid
 	}
 
-	role := c.GetHeader("X-Role")
-	jadwal, err := h.service.Update(id, tanggal, backupID, role)
+	requesterIDStr, _ := c.Get("karyawan_id")
+	requesterID, _ := uuid.Parse(requesterIDStr.(string))
+
+	jadwal, err := h.service.Update(id, tanggal, backupID, requesterID)
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -157,7 +162,11 @@ func (h *JadwalLiburHandler) Update(c *gin.Context) {
 
 func (h *JadwalLiburHandler) Delete(c *gin.Context) {
 	id, _ := uuid.Parse(c.Param("id"))
-	if err := h.service.Delete(id); err != nil {
+	
+	requesterIDStr, _ := c.Get("karyawan_id")
+	requesterID, _ := uuid.Parse(requesterIDStr.(string))
+
+	if err := h.service.Delete(id, requesterID); err != nil {
 		h.handleError(c, err)
 		return
 	}

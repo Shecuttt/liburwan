@@ -39,16 +39,28 @@ func main() {
 	tokoRepo := repository.NewTokoRepository(db)
 	karyawanRepo := repository.NewKaryawanRepository(db)
 	jadwalRepo := repository.NewJadwalLiburRepository(db)
+	backupRepo := repository.NewBackupAssignmentRepository(db)
+	metrikRepo := repository.NewMetrikRepository(db)
+	configRepo := repository.NewKonfigurasiRepository(db)
 
 	// Services
 	tokoService := service.NewTokoService(tokoRepo)
 	karyawanService := service.NewKaryawanService(karyawanRepo)
-	jadwalService := service.NewJadwalLiburService(jadwalRepo, karyawanRepo)
+	auditLogService := service.NewAuditLogService()
+	configService := service.NewKonfigurasiService(configRepo, auditLogService)
+	jadwalService := service.NewJadwalLiburService(jadwalRepo, karyawanRepo, configService, auditLogService)
+	backupService := service.NewBackupAssignmentService(backupRepo, jadwalRepo, auditLogService)
+	metrikService := service.NewMetrikService(metrikRepo, karyawanRepo, tokoRepo, jadwalRepo)
+	authService := service.NewAuthService(karyawanRepo)
 
 	// Handlers
 	tokoHandler := handler.NewTokoHandler(tokoService)
 	karyawanHandler := handler.NewKaryawanHandler(karyawanService)
 	jadwalHandler := handler.NewJadwalLiburHandler(jadwalService)
+	backupHandler := handler.NewBackupAssignmentHandler(backupService)
+	metrikHandler := handler.NewMetrikHandler(metrikService)
+	configHandler := handler.NewKonfigurasiHandler(configService)
+	authHandler := handler.NewAuthHandler(authService, karyawanService)
 
 	// Init Gin Router
 	r := gin.Default()
@@ -56,33 +68,69 @@ func main() {
 	// API Routes
 	api := r.Group("/api/v1")
 	{
-		// Toko Routes
-		toko := api.Group("/toko")
+		// Auth Routes (Public)
+		auth := api.Group("/auth")
 		{
-			toko.GET("", tokoHandler.GetAll)
-			toko.GET("/:toko_id", tokoHandler.GetByID)
-			toko.POST("", handler.AdminOnly(), tokoHandler.Create)
+			auth.GET("/google", authHandler.GoogleLogin)
+			auth.GET("/google/callback", authHandler.GoogleCallback)
+			auth.GET("/me", handler.JWTMiddleware(authService), authHandler.Me)
 		}
 
-		// Karyawan Routes
-		karyawan := api.Group("/karyawan")
+		// Protected Routes
+		protected := api.Group("/")
+		protected.Use(handler.JWTMiddleware(authService))
 		{
-			karyawan.GET("", karyawanHandler.GetAll)
-			karyawan.GET("/:karyawan_id", karyawanHandler.GetByID)
-			karyawan.POST("", handler.AdminOnly(), karyawanHandler.Create)
-			karyawan.PATCH("/:karyawan_id", handler.AdminOnly(), karyawanHandler.Update)
-		}
+			// Toko Routes
+			toko := protected.Group("/toko")
+			{
+				toko.GET("", tokoHandler.GetAll)
+				toko.GET("/:toko_id", tokoHandler.GetByID)
+				toko.POST("", handler.AdminOnly(), tokoHandler.Create)
+			}
 
-		// Jadwal Libur Routes
-		jadwal := api.Group("/jadwal-libur")
-		{
-			jadwal.GET("", jadwalHandler.GetAll)
-			jadwal.GET("/check", jadwalHandler.CheckAvailability)
-			jadwal.POST("", jadwalHandler.CreatePlanned)
-			jadwal.POST("/unplanned", handler.AdminOnly(), jadwalHandler.CreateUnplanned)
-			jadwal.GET("/:id", jadwalHandler.GetByID)
-			jadwal.PATCH("/:id", jadwalHandler.Update)
-			jadwal.DELETE("/:id", jadwalHandler.Delete)
+			// Karyawan Routes
+			karyawan := protected.Group("/karyawan")
+			{
+				karyawan.GET("", karyawanHandler.GetAll)
+				karyawan.GET("/:karyawan_id", karyawanHandler.GetByID)
+				karyawan.POST("", handler.AdminOnly(), karyawanHandler.Create)
+				karyawan.PATCH("/:karyawan_id", handler.AdminOnly(), karyawanHandler.Update)
+			}
+
+			// Jadwal Libur Routes
+			jadwal := protected.Group("/jadwal-libur")
+			{
+				jadwal.GET("", jadwalHandler.GetAll)
+				jadwal.GET("/check", jadwalHandler.CheckAvailability)
+				jadwal.POST("", jadwalHandler.CreatePlanned)
+				jadwal.POST("/unplanned", handler.AdminOnly(), jadwalHandler.CreateUnplanned)
+				jadwal.GET("/:id", jadwalHandler.GetByID)
+				jadwal.PATCH("/:id", jadwalHandler.Update)
+				jadwal.DELETE("/:id", jadwalHandler.Delete)
+			}
+
+			// Backup Assignment Routes
+			backup := protected.Group("/backup-assignment")
+			{
+				backup.POST("", handler.AdminOnly(), backupHandler.Create)
+				backup.DELETE("/:id", handler.AdminOnly(), backupHandler.Delete)
+			}
+
+			// Metrik Routes
+			metrik := protected.Group("/metrik")
+			metrik.Use(handler.AdminOnly())
+			{
+				metrik.GET("/karyawan/:karyawan_id", metrikHandler.GetKaryawanMetrik)
+				metrik.GET("/toko/:toko_id", metrikHandler.GetTokoMetrik)
+			}
+
+			// Konfigurasi Routes
+			konfigurasi := protected.Group("/konfigurasi")
+			konfigurasi.Use(handler.AdminOnly())
+			{
+				konfigurasi.GET("", configHandler.GetAll)
+				konfigurasi.PATCH("/:key", configHandler.Update)
+			}
 		}
 
 		// Ping

@@ -1,0 +1,2 @@
+ALTER TABLE karyawan DROP COLUMN IF EXISTS email;
+ALTER TABLE karyawan DROP COLUMN IF EXISTS google_id;
