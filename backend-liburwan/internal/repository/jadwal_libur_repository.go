@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"backend-liburwan/internal/lib/timeutil"
 	"backend-liburwan/internal/model"
 	"time"
 
@@ -32,8 +33,12 @@ func (r *JadwalLiburRepository) GetAll(karyawanID, tokoID, bulan string) ([]mode
 	}
 	if bulan != "" {
 		// Expecting YYYY-MM
-		start := bulan + "-01"
-		query = query.Where("tanggal >= ? AND tanggal < ? + interval '1 month'", start, start)
+		t, err := time.ParseInLocation("2006-01", bulan, timeutil.Loc)
+		if err == nil {
+			start := t
+			end := t.AddDate(0, 1, 0)
+			query = query.Where("tanggal >= ? AND tanggal < ?", start, end)
+		}
 	}
 
 	err := query.Find(&jadwals).Error
@@ -98,7 +103,7 @@ func (r *JadwalLiburRepository) Delete(id uuid.UUID) error {
 
 func (r *JadwalLiburRepository) CountEmployeeLeavesInMonth(karyawanID uuid.UUID, year int, month time.Month) (int64, error) {
 	var count int64
-	start := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
+	start := time.Date(year, month, 1, 0, 0, 0, 0, timeutil.Loc)
 	end := start.AddDate(0, 1, 0)
 	err := r.db.Model(&model.JadwalLibur{}).
 		Where("karyawan_id = ? AND tanggal >= ? AND tanggal < ? AND tipe = 'planned'", karyawanID, start, end).

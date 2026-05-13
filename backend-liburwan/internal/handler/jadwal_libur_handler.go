@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"backend-liburwan/internal/lib/timeutil"
 	"backend-liburwan/internal/service"
 	"net/http"
 	"time"
@@ -33,7 +34,7 @@ func (h *JadwalLiburHandler) GetAll(c *gin.Context) {
 
 func (h *JadwalLiburHandler) CheckAvailability(c *gin.Context) {
 	tanggalStr := c.Query("tanggal")
-	tanggal, err := time.Parse("2006-01-02", tanggalStr)
+	tanggal, err := time.ParseInLocation("2006-01-02", tanggalStr, timeutil.Loc)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"code": "BAD_REQUEST", "message": "Format tanggal salah (YYYY-MM-DD)"})
 		return
@@ -70,7 +71,7 @@ func (h *JadwalLiburHandler) CreatePlanned(c *gin.Context) {
 		return
 	}
 
-	tanggal, _ := time.Parse("2006-01-02", req.Tanggal)
+	tanggal, _ := time.ParseInLocation("2006-01-02", req.Tanggal, timeutil.Loc)
 	karyawanIDStr, _ := c.Get("karyawan_id")
 	karyawanID, _ := uuid.Parse(karyawanIDStr.(string))
 
@@ -101,8 +102,8 @@ func (h *JadwalLiburHandler) CreateUnplanned(c *gin.Context) {
 	}
 
 	karyawanID, _ := uuid.Parse(req.KaryawanID)
-	tanggal, _ := time.Parse("2006-01-02", req.Tanggal)
-
+	tanggal, _ := time.ParseInLocation("2006-01-02", req.Tanggal, timeutil.Loc)
+	
 	adminIDStr, _ := c.Get("karyawan_id")
 	adminID, _ := uuid.Parse(adminIDStr.(string))
 
@@ -141,7 +142,7 @@ func (h *JadwalLiburHandler) Update(c *gin.Context) {
 		return
 	}
 
-	tanggal, _ := time.Parse("2006-01-02", req.Tanggal)
+	tanggal, _ := time.ParseInLocation("2006-01-02", req.Tanggal, timeutil.Loc)
 	var backupID *uuid.UUID
 	if req.BackupKaryawanID != nil && *req.BackupKaryawanID != "" {
 		bid, _ := uuid.Parse(*req.BackupKaryawanID)
@@ -178,17 +179,21 @@ func (h *JadwalLiburHandler) handleError(c *gin.Context, err error) {
 	case service.ErrOutOfWindow:
 		c.JSON(http.StatusBadRequest, gin.H{"code": "OUT_OF_WINDOW", "message": "Hanya bisa booking bulan berjalan dan bulan depan"})
 	case service.ErrKuotaHabis:
-		c.JSON(http.StatusBadRequest, gin.H{"code": "KUOTA_HABIS", "message": "Kuota libur bulan ini sudah habis (3/3)"})
+		c.JSON(http.StatusBadRequest, gin.H{"code": "KUOTA_HABIS", "message": "Kuota libur Anda untuk bulan ini sudah habis"})
 	case service.ErrBackupRequired:
 		c.JSON(http.StatusBadRequest, gin.H{"code": "BACKUP_REQUIRED", "message": "Toko akan tersisa 1 orang, wajib sertakan backup_karyawan_id"})
 	case service.ErrBackupInvalid:
 		c.JSON(http.StatusBadRequest, gin.H{"code": "BACKUP_INVALID", "message": "Karyawan yang dipilih sebagai backup juga libur di tanggal ini"})
+	case service.ErrBackupSelf:
+		c.JSON(http.StatusBadRequest, gin.H{"code": "BACKUP_INVALID", "message": "Tidak dapat menunjuk diri sendiri sebagai backup"})
 	case service.ErrNoBackupAvailable:
 		c.JSON(http.StatusBadRequest, gin.H{"code": "NO_BACKUP_AVAILABLE", "message": "Tidak ada karyawan lain yang bisa jadi backup di tanggal ini"})
 	case service.ErrTanggalTerlewat:
 		c.JSON(http.StatusBadRequest, gin.H{"code": "TANGGAL_TERLEWAT", "message": "Tidak bisa memproses jadwal libur yang tanggalnya sudah lewat"})
 	case service.ErrNotFound:
 		c.JSON(http.StatusNotFound, gin.H{"code": "NOT_FOUND", "message": "Jadwal libur tidak ditemukan"})
+	case service.ErrUnauthorized:
+		c.JSON(http.StatusForbidden, gin.H{"code": "UNAUTHORIZED_ACTION", "message": "Anda tidak memiliki akses untuk melakukan tindakan ini"})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_SERVER_ERROR", "message": err.Error()})
 	}

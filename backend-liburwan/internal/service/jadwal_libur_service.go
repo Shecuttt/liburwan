@@ -1,6 +1,7 @@
 package service
 
 import (
+	"backend-liburwan/internal/lib/timeutil"
 	"backend-liburwan/internal/model"
 	"backend-liburwan/internal/repository"
 	"errors"
@@ -15,9 +16,11 @@ var (
 	ErrKuotaHabis        = errors.New("KUOTA_HABIS")
 	ErrBackupRequired    = errors.New("BACKUP_REQUIRED")
 	ErrBackupInvalid     = errors.New("BACKUP_INVALID")
+	ErrBackupSelf        = errors.New("BACKUP_SELF")
 	ErrNoBackupAvailable = errors.New("NO_BACKUP_AVAILABLE")
 	ErrTanggalTerlewat   = errors.New("TANGGAL_TERLEWAT")
 	ErrNotFound          = errors.New("NOT_FOUND")
+	ErrUnauthorized      = errors.New("UNAUTHORIZED_ACTION")
 )
 
 type JadwalLiburService struct {
@@ -120,6 +123,9 @@ func (s *JadwalLiburService) CreatePlanned(karyawanID uuid.UUID, tanggal time.Ti
 		if backupKaryawanID == nil {
 			return nil, ErrBackupRequired
 		}
+		if *backupKaryawanID == karyawanID {
+			return nil, ErrBackupSelf
+		}
 		backupOnLeave, _ := s.isKaryawanOnLeave(*backupKaryawanID, tanggal)
 		if backupOnLeave {
 			return nil, ErrBackupInvalid
@@ -209,7 +215,10 @@ func (s *JadwalLiburService) Update(id uuid.UUID, tanggal time.Time, backupKarya
 		return nil, ErrNotFound
 	}
 
-	if oldJadwal.Tanggal.Before(time.Now().Truncate(24 * time.Hour)) || oldJadwal.Tanggal.Equal(time.Now().Truncate(24 * time.Hour)) {
+	now := timeutil.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, timeutil.Loc)
+	
+	if oldJadwal.Tanggal.Before(today) || oldJadwal.Tanggal.Equal(today) {
 		return nil, ErrTanggalTerlewat
 	}
 
@@ -239,6 +248,9 @@ func (s *JadwalLiburService) Update(id uuid.UUID, tanggal time.Time, backupKarya
 		if backupKaryawanID == nil {
 			return nil, ErrBackupRequired
 		}
+		if *backupKaryawanID == oldJadwal.KaryawanID {
+			return nil, ErrBackupSelf
+		}
 		backupOnLeave, _ := s.isKaryawanOnLeave(*backupKaryawanID, tanggal)
 		if backupOnLeave {
 			return nil, ErrBackupInvalid
@@ -266,9 +278,11 @@ func (s *JadwalLiburService) Update(id uuid.UUID, tanggal time.Time, backupKarya
 		payload := map[string]interface{}{
 			"before": map[string]interface{}{
 				"tanggal": oldJadwal.Tanggal,
+				"has_backup": oldJadwal.BackupAssignment != nil,
 			},
 			"after": map[string]interface{}{
 				"tanggal": tanggal,
+				"has_backup": backup != nil,
 			},
 		}
 
@@ -288,8 +302,25 @@ func (s *JadwalLiburService) Delete(id uuid.UUID, requesterID uuid.UUID) error {
 		return ErrNotFound
 	}
 
-	if jadwal.Tanggal.Before(time.Now().Truncate(24 * time.Hour)) || jadwal.Tanggal.Equal(time.Now().Truncate(24 * time.Hour)) {
-		return ErrTanggalTerlewat
+	var requester model.Karyawan
+	if err := s.repo.DB().First(&requester, "id = ?", requesterID).Error; err != nil {
+		return err
+	}
+
+	if jadwal.KaryawanID != requesterID && requester.Role != "admin" {
+		return ErrUnauthorized
+	}
+
+	isAdmin := requester.Role == "admin"
+	skipDateValidation := isAdmin && jadwal.Tipe == "unplanned"
+
+	now := timeutil.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, timeutil.Loc)
+
+	if !skipDateValidation {
+		if jadwal.Tanggal.Before(today) || jadwal.Tanggal.Equal(today) {
+			return ErrTanggalTerlewat
+		}
 	}
 
 	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
@@ -297,7 +328,12 @@ func (s *JadwalLiburService) Delete(id uuid.UUID, requesterID uuid.UUID) error {
 			"jadwal": jadwal,
 		}
 		
-		if err := s.auditService.Log(tx, &requesterID, "DELETE_JADWAL_LIBUR", "jadwal_libur", id, payload); err != nil {
+		action := "DELETE_JADWAL_LIBUR"
+		if jadwal.Tipe == "unplanned" {
+			action = "DELETE_UNPLANNED_LEAVE"
+		}
+		
+		if err := s.auditService.Log(tx, &requesterID, action, "jadwal_libur", id, payload); err != nil {
 			return err
 		}
 
@@ -307,13 +343,12 @@ func (s *JadwalLiburService) Delete(id uuid.UUID, requesterID uuid.UUID) error {
 
 // Helpers
 func (s *JadwalLiburService) isWithinWindow(tanggal time.Time) bool {
-	now := time.Now()
-	currentMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.Local)
+	currentMonth := timeutil.StartOfCurrentMonth()
 	nextMonth := currentMonth.AddDate(0, 1, 0)
 	lastDayOfNextMonth := nextMonth.AddDate(0, 1, -1)
 
 	// Normalize target date to local midnight
-	target := time.Date(tanggal.Year(), tanggal.Month(), tanggal.Day(), 0, 0, 0, 0, time.Local)
+	target := time.Date(tanggal.Year(), tanggal.Month(), tanggal.Day(), 0, 0, 0, 0, timeutil.Loc)
 	
 	return (target.After(currentMonth) || target.Equal(currentMonth)) && (target.Before(lastDayOfNextMonth) || target.Equal(lastDayOfNextMonth))
 }

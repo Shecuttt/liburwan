@@ -749,8 +749,12 @@ paths:
       summary: Batalkan jadwal libur
       description: |
         Hanya bisa dilakukan oleh karyawan pemilik atau admin.
-        Hanya bisa dibatalkan jika tanggal > current_date.
-        Backup assignment terkait akan ikut terhapus (cascade).
+        Backup assignment terkait ikut terhapus (cascade).
+
+        Constraint berdasarkan role dan tipe:
+        - Karyawan: hanya bisa hapus milik sendiri, hanya jika tanggal > current_date
+        - Admin + tipe planned: hanya jika tanggal > current_date
+        - Admin + tipe unplanned: tidak ada constraint tanggal, bisa hapus kapan saja
       parameters:
         - name: id
           in: path

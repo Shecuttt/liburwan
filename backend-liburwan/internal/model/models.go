@@ -7,10 +7,10 @@ import (
 )
 
 type Toko struct {
-	ID        uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	Nama      string    `gorm:"type:varchar(255);not null"`
-	IsPusat   bool      `gorm:"default:false"`
-	CreatedAt time.Time
+	ID        uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	Nama      string    `gorm:"type:varchar(255);not null" json:"nama"`
+	IsPusat   bool      `gorm:"default:false" json:"is_pusat"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func (Toko) TableName() string {
@@ -33,13 +33,14 @@ func (Karyawan) TableName() string {
 }
 
 type JadwalLibur struct {
-	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	KaryawanID uuid.UUID `gorm:"type:uuid"`
-	Karyawan   Karyawan  `gorm:"foreignKey:KaryawanID"`
-	Tanggal    time.Time `gorm:"type:date;not null"`
-	Tipe       string    `gorm:"type:leave_type;not null"` // Using the custom enum type
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID               uuid.UUID         `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	KaryawanID       uuid.UUID         `gorm:"type:uuid" json:"karyawan_id"`
+	Karyawan         Karyawan          `gorm:"foreignKey:KaryawanID" json:"karyawan,omitempty"`
+	Tanggal          time.Time         `gorm:"type:date;not null" json:"tanggal"`
+	Tipe             string            `gorm:"type:leave_type;not null" json:"tipe"`
+	BackupAssignment *BackupAssignment `gorm:"foreignKey:JadwalLiburID" json:"backup_assignment,omitempty"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
 }
 
 func (JadwalLibur) TableName() string {
@@ -47,14 +48,14 @@ func (JadwalLibur) TableName() string {
 }
 
 type BackupAssignment struct {
-	ID               uuid.UUID   `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	JadwalLiburID    uuid.UUID   `gorm:"type:uuid"`
-	JadwalLibur      JadwalLibur `gorm:"foreignKey:JadwalLiburID;constraint:OnDelete:CASCADE"`
-	BackupKaryawanID uuid.UUID   `gorm:"type:uuid"`
-	BackupKaryawan   Karyawan    `gorm:"foreignKey:BackupKaryawanID"`
-	AssignedBy       uuid.UUID   `gorm:"type:uuid"`
-	Assigner         Karyawan    `gorm:"foreignKey:AssignedBy"`
-	CreatedAt        time.Time
+	ID               uuid.UUID    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	JadwalLiburID    uuid.UUID    `gorm:"type:uuid" json:"jadwal_libur_id"`
+	JadwalLibur      *JadwalLibur `gorm:"foreignKey:JadwalLiburID;constraint:OnDelete:CASCADE" json:"jadwal_libur,omitempty"`
+	BackupKaryawanID uuid.UUID    `gorm:"type:uuid" json:"backup_karyawan_id"`
+	BackupKaryawan   Karyawan     `gorm:"foreignKey:BackupKaryawanID" json:"backup_karyawan,omitempty"`
+	AssignedBy       uuid.UUID    `gorm:"type:uuid" json:"assigned_by"`
+	Assigner         Karyawan     `gorm:"foreignKey:AssignedBy" json:"assigner,omitempty"`
+	CreatedAt        time.Time    `json:"created_at"`
 }
 
 func (BackupAssignment) TableName() string {
@@ -77,6 +78,10 @@ type AuditLog struct {
 	EntityID   uuid.UUID `gorm:"type:uuid;not null" json:"entity_id"`
 	Payload    string    `gorm:"type:jsonb" json:"payload"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+func (AuditLog) TableName() string {
+	return "audit_log"
 }
 
 func (Konfigurasi) TableName() string {

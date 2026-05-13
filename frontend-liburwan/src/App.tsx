@@ -1,20 +1,36 @@
-import { Button } from "@/components/ui/button"
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
+import { RoleGuard } from "@/components/auth/RoleGuard"
+import LoginPage from "@/pages/login/LoginPage"
+import CallbackPage from "@/pages/auth/CallbackPage"
+import CalendarPage from "@/pages/calendar/CalendarPage"
+import MetricsPage from "@/pages/metrics/MetricsPage"
+import SettingsPage from "@/pages/settings/SettingsPage"
 
 export function App() {
   return (
-    <div className="flex min-h-svh p-6">
-      <div className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
-        <div>
-          <h1 className="font-medium">Project ready!</h1>
-          <p>You may now add components and start building.</p>
-          <p>We&apos;ve already added the button component for you.</p>
-          <Button className="mt-2">Button</Button>
-        </div>
-        <div className="font-mono text-xs text-muted-foreground">
-          (Press <kbd>d</kbd> to toggle dark mode)
-        </div>
-      </div>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        {/* Public Routes */}
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/auth/callback" element={<CallbackPage />} />
+
+        {/* Protected Routes */}
+        <Route element={<ProtectedRoute />}>
+          <Route path="/" element={<CalendarPage />} />
+          <Route path="/calendar" element={<Navigate to="/" replace />} />
+          
+          {/* Admin Only Routes */}
+          <Route element={<RoleGuard role="admin" />}>
+            <Route path="/metrik" element={<MetricsPage />} />
+            <Route path="/konfigurasi" element={<SettingsPage />} />
+          </Route>
+        </Route>
+
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
   )
 }
 

@@ -23,7 +23,7 @@ func InitDB() (*gorm.DB, error) {
 		dbSSLMode = "disable"
 	}
 
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s TimeZone=Asia/Jakarta",
 		dbHost, dbPort, dbUser, dbPassword, dbName, dbSSLMode)
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})

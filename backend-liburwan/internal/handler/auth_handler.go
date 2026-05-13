@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"os"
 )
 
 type AuthHandler struct {
@@ -30,7 +31,7 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	token, karyawan, err := h.authService.HandleGoogleCallback(code)
+	token, _, err := h.authService.HandleGoogleCallback(code)
 	if err != nil {
 		if err.Error() == "USER_NOT_REGISTERED" {
 			c.JSON(http.StatusForbidden, gin.H{"code": "FORBIDDEN", "message": "Email tidak terdaftar di sistem"})
@@ -40,15 +41,27 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"token":    token,
-		"karyawan": karyawan,
-	})
+	c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/auth/callback?token="+token)
 }
 
 func (h *AuthHandler) Me(c *gin.Context) {
-	karyawanIDStr, _ := c.Get("karyawan_id")
-	karyawanID, _ := uuid.Parse(karyawanIDStr.(string))
+	karyawanIDVal, exists := c.Get("karyawan_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": "UNAUTHORIZED", "message": "Karyawan ID tidak ditemukan dalam konteks"})
+		return
+	}
+
+	karyawanIDStr, ok := karyawanIDVal.(string)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_SERVER_ERROR", "message": "Format Karyawan ID tidak valid"})
+		return
+	}
+
+	karyawanID, err := uuid.Parse(karyawanIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "BAD_REQUEST", "message": "Format UUID tidak valid"})
+		return
+	}
 
 	karyawan, err := h.karyawanService.GetByID(karyawanID)
 	if err != nil {

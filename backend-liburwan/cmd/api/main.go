@@ -5,14 +5,18 @@ import (
 
 	"backend-liburwan/internal/config"
 	"backend-liburwan/internal/handler"
+	"backend-liburwan/internal/lib/timeutil"
 	"backend-liburwan/internal/repository"
 	"backend-liburwan/internal/service"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
 func main() {
+	// Set global timezone
+	time.Local = timeutil.Loc
 	// Load .env file
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found")
@@ -52,6 +56,7 @@ func main() {
 	backupService := service.NewBackupAssignmentService(backupRepo, jadwalRepo, auditLogService)
 	metrikService := service.NewMetrikService(metrikRepo, karyawanRepo, tokoRepo, jadwalRepo)
 	authService := service.NewAuthService(karyawanRepo)
+	kalenderService := service.NewKalenderService(jadwalRepo, tokoRepo, karyawanRepo)
 
 	// Handlers
 	tokoHandler := handler.NewTokoHandler(tokoService)
@@ -61,6 +66,7 @@ func main() {
 	metrikHandler := handler.NewMetrikHandler(metrikService)
 	configHandler := handler.NewKonfigurasiHandler(configService)
 	authHandler := handler.NewAuthHandler(authService, karyawanService)
+	kalenderHandler := handler.NewKalenderHandler(kalenderService)
 
 	// Init Gin Router
 	r := gin.Default()
@@ -83,6 +89,9 @@ func main() {
 		protected := api.Group("/")
 		protected.Use(handler.JWTMiddleware(authService))
 		{
+			// Kalender Route
+			protected.GET("/kalender", kalenderHandler.GetCalendar)
+
 			// Toko Routes
 			toko := protected.Group("/toko")
 			{
