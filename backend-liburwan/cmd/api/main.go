@@ -38,14 +38,17 @@ func main() {
 	// Repositories
 	tokoRepo := repository.NewTokoRepository(db)
 	karyawanRepo := repository.NewKaryawanRepository(db)
+	jadwalRepo := repository.NewJadwalLiburRepository(db)
 
 	// Services
 	tokoService := service.NewTokoService(tokoRepo)
 	karyawanService := service.NewKaryawanService(karyawanRepo)
+	jadwalService := service.NewJadwalLiburService(jadwalRepo, karyawanRepo)
 
 	// Handlers
 	tokoHandler := handler.NewTokoHandler(tokoService)
 	karyawanHandler := handler.NewKaryawanHandler(karyawanService)
+	jadwalHandler := handler.NewJadwalLiburHandler(jadwalService)
 
 	// Init Gin Router
 	r := gin.Default()
@@ -68,6 +71,18 @@ func main() {
 			karyawan.GET("/:karyawan_id", karyawanHandler.GetByID)
 			karyawan.POST("", handler.AdminOnly(), karyawanHandler.Create)
 			karyawan.PATCH("/:karyawan_id", handler.AdminOnly(), karyawanHandler.Update)
+		}
+
+		// Jadwal Libur Routes
+		jadwal := api.Group("/jadwal-libur")
+		{
+			jadwal.GET("", jadwalHandler.GetAll)
+			jadwal.GET("/check", jadwalHandler.CheckAvailability)
+			jadwal.POST("", jadwalHandler.CreatePlanned)
+			jadwal.POST("/unplanned", handler.AdminOnly(), jadwalHandler.CreateUnplanned)
+			jadwal.GET("/:id", jadwalHandler.GetByID)
+			jadwal.PATCH("/:id", jadwalHandler.Update)
+			jadwal.DELETE("/:id", jadwalHandler.Delete)
 		}
 
 		// Ping

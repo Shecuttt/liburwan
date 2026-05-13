@@ -14,6 +14,10 @@ func NewKaryawanRepository(db *gorm.DB) *KaryawanRepository {
 	return &KaryawanRepository{db: db}
 }
 
+func (r *KaryawanRepository) DB() *gorm.DB {
+	return r.db
+}
+
 func (r *KaryawanRepository) GetAll(tokoID string) ([]model.Karyawan, error) {
 	var karyawans []model.Karyawan
 	query := r.db.Preload("Toko")
