@@ -65,6 +65,9 @@ func main() {
 	// Init Gin Router
 	r := gin.Default()
 
+	// Apply CORS
+	r.Use(handler.CORSMiddleware())
+
 	// API Routes
 	api := r.Group("/api/v1")
 	{
