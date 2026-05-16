@@ -1,0 +1,10 @@
+.env
+.git
+.gitignore
+node_modules
+vendor
+bin
+server
+tmp
+Dockerfile
+docker-compose.yml
